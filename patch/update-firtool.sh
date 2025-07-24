@@ -50,7 +50,7 @@ update_firtool() {
                 echo "Unsupported darwin architecture"
                 echo "Please build firtool from source, see: https://github.com/llvm/circt?tab=readme-ov-file#setting-this-up"
                 echo "Then copy the built firtool binary to $firtool_patch_dir/firtool-$firtool_update_version/bin/firtool"
-                exit 1
+                # exit 1
             else
                 firtool_arch="macos-x64"
             fi
@@ -70,4 +70,4 @@ update_firtool() {
 
 # Call update_firtool with version and patch directory
 # e.g. update_firtool 1.105.0 `pwd`/patch/firtool
-update_firtool $1 $2
+# update_firtool $1 $2

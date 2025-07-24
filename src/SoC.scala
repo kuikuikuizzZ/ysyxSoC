@@ -39,6 +39,7 @@ class ysyxSoCASIC(implicit p: Parameters) extends LazyModule {
     AddressSet.misaligned(0x10001000, 0x1000) ++    // SPI controller
     AddressSet.misaligned(0x30000000, 0x10000000)   // XIP flash
   ))
+
   val lpsram = LazyModule(new APBPSRAM(AddressSet.misaligned(0x80000000L, 0x400000)))
   val lmrom = LazyModule(new AXI4MROM(AddressSet.misaligned(0x20000000, 0x1000)))
   val sramNode = AXI4RAM(AddressSet.misaligned(0x0f000000, 0x2000).head, false, true, 4, None, Nil, false)
@@ -57,9 +58,21 @@ class ysyxSoCASIC(implicit p: Parameters) extends LazyModule {
 
   override lazy val module = new Impl
   class Impl extends LazyModuleImp(this) with DontTouch {
+    
     // generate delayed reset for cpu, since chiplink should finish reset
     // to initialize some async modules before accept any requests from cpu
-    cpu.module.reset := SynchronizerShiftReg(reset.asBool, 10) || reset.asBool
+    // cpu.module.reset := SynchronizerShiftReg(reset.asBool, 10) || reset.asBool
+
+    ////// the line above is not guaranteed to reset === 1 in first 10 cycles
+    val initCounter = RegInit(0.U(5.W))  
+    val maxCount = 10.U                  
+    val initReset = (initCounter < maxCount) 
+    when(initCounter < maxCount) {
+      initCounter := initCounter + 1.U
+    }
+    ////// 
+
+    cpu.module.reset := initReset.asBool || reset.asBool
 
     val fpga_io = if (Config.hasChipLink) Some(IO(chiselTypeOf(chipMaster.get.module.fpga_io))) else None
     if (Config.hasChipLink) {
@@ -135,7 +148,7 @@ class ysyxSoCFull(implicit p: Parameters) extends LazyModule {
     val flash = Module(new flash)
     flash.io <> masic.spi
     flash.io.ss := masic.spi.ss(0)
-    val bitrev = Module(new bitrev)
+    val bitrev = Module(new bitrevChisel(8))
     bitrev.io <> masic.spi
     bitrev.io.ss := masic.spi.ss(7)
     masic.spi.miso := List(bitrev.io, flash.io).map(_.miso).reduce(_&&_)
