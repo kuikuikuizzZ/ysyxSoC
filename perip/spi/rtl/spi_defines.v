@@ -67,10 +67,10 @@
 // SPI_MAX_CHAR_32, SPI_MAX_CHAR_24, SPI_MAX_CHAR_16, SPI_MAX_CHAR_8.
 //
 // `define SPI_MAX_CHAR_128
-//`define SPI_MAX_CHAR_64
+`define SPI_MAX_CHAR_64
 // `define SPI_MAX_CHAR_32
 // `define SPI_MAX_CHAR_24
-`define SPI_MAX_CHAR_16
+// `define SPI_MAX_CHAR_16
 // `define SPI_MAX_CHAR_8
 
 `ifdef SPI_MAX_CHAR_128
@@ -155,5 +155,5 @@
 `define SPI_CTRL_RX_NEGEDGE     9
 `define SPI_CTRL_GO             8
 `define SPI_CTRL_RES_1          7
-`define SPI_CTRL_CHAR_LEN       3:0
+`define SPI_CTRL_CHAR_LEN       5:0
 
