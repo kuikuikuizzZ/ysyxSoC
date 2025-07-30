@@ -58,6 +58,9 @@ class APBSPI(address: Seq[AddressSet])(implicit p: Parameters) extends LazyModul
     val state = RegInit(s_idle)
 
     val paddr   =   RegEnable(in.paddr, state === s_idle && is_flash_read)
+    // NOTE: spi read flash reverse bits, need to reverse the data
+    val rev_data = Cat(mspi.io.in.prdata(7,0),mspi.io.in.prdata(15,8), 
+                        mspi.io.in.prdata(23,16), mspi.io.in.prdata(31,24))
     switch(state) {
       is(s_idle) {
           // in.penable and in.psel which is better?
@@ -221,7 +224,7 @@ class APBSPI(address: Seq[AddressSet])(implicit p: Parameters) extends LazyModul
           }
       }
       is(s_read) {
-          in.prdata := mspi.io.in.prdata
+          in.prdata := rev_data
           in.pready := false.B
           in.pduser := mspi.io.in.pduser 
           in.pslverr := mspi.io.in.pslverr 
@@ -242,36 +245,20 @@ class APBSPI(address: Seq[AddressSet])(implicit p: Parameters) extends LazyModul
           
           when(mspi.io.in.pready ) {
             counter := counter + 1.U
-            in.prdata := mspi.io.in.prdata
+            in.prdata := rev_data
           }
           when (counter === 2.U) {
             mspi.io.in.psel     :=  false.B
             mspi.io.in.penable     :=  false.B
             in.pready := true.B
             counter := 0.U
-            in.prdata := mspi.io.in.prdata
+            in.prdata := rev_data
             in.pduser := mspi.io.in.pduser 
             in.pslverr := mspi.io.in.pslverr 
             state := s_idle
           }
       }
-      // is(s_read_result) {
-      //   when(mspi.io.in.pready) {
-      //     mspi.io.in.penable := false.B
-      //     mspi.io.in.psel    := false.B
-          
-      //     mspi.io.in.pwrite   :=  false.B
-      //     mspi.io.in.paddr    :=  SPI_BASE + SPI_RX0
-      //     // mspi.io.in.pwdata   :=  0x100.U
-      //     mspi.io.in.pprot    :=  in.pprot
-      //     mspi.io.in.pstrb    :=  in.pstrb
-      //     mspi.io.in.pauser   :=  in.pauser
 
-      //     in.pduser := mspi.io.in.pduser 
-      //     in.pslverr := mspi.io.in.pslverr 
-      //     state := s_idle
-      //   }
-      // }
     }
      
   } 

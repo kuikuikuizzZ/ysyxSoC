@@ -9,6 +9,40 @@ import org.chipsalliance.cde.config.Parameters
 import freechips.rocketchip.diplomacy._
 import freechips.rocketchip.util._
 
+import ysyx.Constants._
+
+
+object NegRegInit {
+  def apply[T <: Data](initValue: T, clockVal: Bool, resetVal: Bool): T = {
+    val negClock = (~ clockVal.asUInt).asBool.asClock
+
+    withClockAndReset(negClock, resetVal) {
+      RegInit(initValue)
+    }
+  }
+}
+
+object SCKRegInit {
+  def apply[T <: Data](initValue: T, clockVal: Bool, resetVal: Bool): T = {
+    val clk = (clockVal.asUInt).asBool.asClock
+
+    withClockAndReset(clk, resetVal.asAsyncReset) {
+      RegInit(initValue)
+    }
+  }
+}
+
+object RegSynRetInit {
+  def apply[T <: Data](initValue: T, clockVal: Bool, resetVal: Bool): T = {
+    val clk = (clockVal.asUInt).asBool.asClock
+
+    withClockAndReset(clk, resetVal.asBool) {
+      RegInit(initValue)
+    }
+  }
+}
+
+
 class QSPIIO extends Bundle {
   val sck = Output(Bool())
   val ce_n = Output(Bool())
@@ -24,13 +58,117 @@ class psram_top_apb extends BlackBox {
   })
 }
 
-class psram extends BlackBox {
+class psram extends  BlackBox  {
   val io = IO(Flipped(new QSPIIO))
+}
+
+class psram_array extends BlackBox with HasBlackBoxInline {
+  val io = IO(new Bundle {
+    val addr =  (Input(UInt(24.W)))
+    val wdata = (Input(UInt(32.W)))
+    val rdata = (Output(UInt(32.W)))
+    val reset = (Input(Bool()))
+    val clock =   (Input(Bool()))
+    val length = (Input(UInt(5.W))) // length of the data to be read or written
+    val wen =   (Input(Bool()))
+    val ren =   (Input(Bool()))
+  })
+
+  setInline("PsramArray.v",
+    """module psram_array(
+      |  input               clock,
+      |  input               reset,
+      |  input               wen,
+      |  input               ren,
+      |  input       [23:0]  addr,
+      |  input       [31:0]  wdata,
+      |  input       [4:0]   length,
+      |  output reg  [31:0]  rdata
+      |);
+      |import "DPI-C" function void psram_read (input int addr, input int length , output int data);
+      |import "DPI-C" function void psram_write(input int addr, input int length , input int data);
+      |  reg [31:0] addr_ext ; // Extend address to 32 bits
+      |  reg [31:0] length_ext; // Extend address to 32 bits
+      |
+      |  reg wen_reg;
+      |  reg [31:0] wdata_reg;
+      |  always @(*) begin
+      |    if (ren ) 
+      |      psram_read(addr_ext,length_ext, rdata);
+      |    else
+      |      rdata = 32'd0;
+      |  end
+      |  always @(posedge reset) begin
+      |   if (wen)
+      |      psram_write(addr_ext,length_ext, wdata_reg);
+      |  end
+      | always @(negedge clock) begin
+      |   wen_reg   <= wen;
+      |   wdata_reg <= wdata;
+      |   addr_ext  <= {8'b0, addr};
+      |   length_ext <= {27'b0, length};
+      | end 
+      |endmodule
+    """.stripMargin)
 }
 
 class psramChisel extends RawModule {
   val io = IO(Flipped(new QSPIIO))
-  val di = TriStateInBuf(io.dio, 0.U, false.B) // change this if you need
+  val dout = Wire(UInt(4.W))
+  // input dout , output din
+  val reset = io.ce_n
+  val dout_en = Wire(Bool())
+  val din = TriStateInBuf(io.dio, dout, dout_en) // change this if you need
+
+  val s_cmd :: s_addr :: s_wait :: s_data  :: Nil = Enum(4)
+  val state               =   SCKRegInit(s_cmd,io.sck,reset)
+  val counter             =   RegSynRetInit(0.U(5.W),io.sck,reset) // counter for cmd, addr, data, wait cycle
+  val length              = Mux(state === s_data,(counter+1.U) >> 1.U,4.U) // length of the data to be read or written, 0 means no data
+  val psram_array         = Module(new psram_array)
+  psram_array.io.reset   := reset
+  psram_array.io.clock   := io.sck
+  psram_array.io.length  := length
+  // only take SI/SO[0] as cmd bit
+  val cmd           =     SCKRegInit(0.U(SPI_CMD_X.getWidth.W),io.sck,reset) // command
+  val addr          =     SCKRegInit(0.U(24.W),io.sck,reset)
+  val din_data      =     SCKRegInit(0.U(32.W),io.sck,reset)
+  val dout_data     =     SCKRegInit(0.U(32.W),io.sck,reset)
+  val wen_reg       =     RegSynRetInit(false.B,io.sck,reset) // write enable register
+  // is qpi only be set when cmd is SPI_CMD_QPI_ENTER or SPI_CMD_QPI_EXIT
+  val is_qpi        =   RegSynRetInit(cmd === SPI_CMD_QPI_ENTER,io.sck,reset) // qpi mode)
+  val cmd_cycle     =   Mux(is_qpi, 2.U, 8.U) - 1.U   // qpi cmd cycle is 2, normal cmd cycle is 8
+  val addr_cycle    =   SCKRegInit(6.U(5.W),io.sck,reset) - 1.U       // TODO: support set by cmd
+  val data_cycle    =   SCKRegInit(8.U(5.W),io.sck,reset) - 1.U
+  val wait_cycle    =   SCKRegInit(6.U(5.W),io.sck,reset)        // wait cycle
+  val ren           =   (state === s_wait) && (counter === wait_cycle) // when wait cycle is over, ren is high
+  val wen           =   wen_reg && ((counter === data_cycle) || reset)  // wen is high when data cycle is over
+  
+  // when read psram dout is valid, dout_en is high 
+  wen_reg          := (cmd === SPI_CMD_QUAD_WRITE) && (state === s_data)
+  is_qpi    :=  Mux( cmd === SPI_CMD_QPI_ENTER || cmd === SPI_CMD_QPI_EXIT, cmd === SPI_CMD_QPI_ENTER, is_qpi) // exit qpi mode
+  dout      :=  Mux(state === s_data, dout_data(31,28), 0xf.U) // dout is 4 bits
+  dout_en   :=  (cmd === SPI_CMD_QUAD_READ) &&  (state === s_data)
+  cmd       :=  Mux(state === s_cmd,Cat(cmd(6,0),din(0)),cmd) // command
+  addr      :=  Mux(state === s_addr,Cat(addr(19,0),din(3,0)),addr)
+  din_data  :=  Mux(state === s_data,Cat(din_data(27,0),din(3,0)),din_data)
+  dout_data :=  Mux(state === s_data ,Cat(dout_data(27,0),0.U(4.W)),Mux(ren,psram_array.io.rdata,dout_data)) // dout_data is 32 bits
+
+  switch(state) {
+    is (s_cmd)  { counter := Mux(!io.ce_n,Mux(counter < cmd_cycle, counter + 1.U,0.U),0.U)  
+                  state := Mux(counter < cmd_cycle,  s_cmd, s_addr) } 
+    is (s_addr) { counter := Mux(counter < addr_cycle, counter + 1.U,0.U)
+                  state := Mux(counter < addr_cycle, s_addr, 
+                  Mux(cmd === SPI_CMD_QUAD_READ,  s_wait, s_data)) }
+    is (s_wait) { counter := Mux(counter < wait_cycle, counter + 1.U,0.U)
+                  state := Mux(counter < wait_cycle, s_wait, s_data)}
+    is (s_data) { counter := Mux(counter < data_cycle, counter + 1.U,0.U)
+                 state := Mux(counter < data_cycle , s_data, s_cmd) }
+  }
+
+  psram_array.io.addr   :=    addr
+  psram_array.io.ren    :=    ren
+  psram_array.io.wen    :=    wen
+  psram_array.io.wdata  :=    din_data
 }
 
 class APBPSRAM(address: Seq[AddressSet])(implicit p: Parameters) extends LazyModule {
