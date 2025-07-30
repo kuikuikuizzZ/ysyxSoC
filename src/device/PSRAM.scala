@@ -92,7 +92,7 @@ class psram_array extends BlackBox with HasBlackBoxInline {
       |
       |  reg wen_reg;
       |  reg [31:0] wdata_reg;
-      |  always @(*) begin
+      |  always @(negedge clock) begin
       |    if (ren ) 
       |      psram_read(addr_ext,length_ext, rdata);
       |    else
@@ -122,7 +122,7 @@ class psramChisel extends RawModule {
 
   val s_cmd :: s_addr :: s_wait :: s_data  :: Nil = Enum(4)
   val state               =   SCKRegInit(s_cmd,io.sck,reset)
-  val counter             =   RegSynRetInit(0.U(5.W),io.sck,reset) // counter for cmd, addr, data, wait cycle
+  val counter             =   SCKRegInit(0.U(5.W),io.sck,reset) // counter for cmd, addr, data, wait cycle
   val length              = Mux(state === s_data,(counter+1.U) >> 1.U,4.U) // length of the data to be read or written, 0 means no data
   val psram_array         = Module(new psram_array)
   psram_array.io.reset   := reset
@@ -142,20 +142,23 @@ class psramChisel extends RawModule {
   val wait_cycle    =   SCKRegInit(6.U(5.W),io.sck,reset)        // wait cycle
   val ren           =   (state === s_wait) && (counter === wait_cycle) // when wait cycle is over, ren is high
   val wen           =   wen_reg && ((counter === data_cycle) || reset)  // wen is high when data cycle is over
+  val is_quad_cmd = (cmd === SPI_CMD_QPI_ENTER) || (cmd === SPI_CMD_QPI_EXIT) 
   
   // when read psram dout is valid, dout_en is high 
   wen_reg          := (cmd === SPI_CMD_QUAD_WRITE) && (state === s_data)
-  is_qpi    :=  Mux( cmd === SPI_CMD_QPI_ENTER || cmd === SPI_CMD_QPI_EXIT, cmd === SPI_CMD_QPI_ENTER, is_qpi) // exit qpi mode
+  is_qpi    :=  Mux( is_quad_cmd, cmd === SPI_CMD_QPI_ENTER, is_qpi) // exit qpi mode
   dout      :=  Mux(state === s_data, dout_data(31,28), 0xf.U) // dout is 4 bits
   dout_en   :=  (cmd === SPI_CMD_QUAD_READ) &&  (state === s_data)
-  cmd       :=  Mux(state === s_cmd,Cat(cmd(6,0),din(0)),cmd) // command
+  cmd       :=  Mux(state === s_cmd,Mux(is_qpi,Cat(cmd(3,0),din(3,0)),Cat(cmd(6,0),din(0))),cmd) // command
   addr      :=  Mux(state === s_addr,Cat(addr(19,0),din(3,0)),addr)
   din_data  :=  Mux(state === s_data,Cat(din_data(27,0),din(3,0)),din_data)
   dout_data :=  Mux(state === s_data ,Cat(dout_data(27,0),0.U(4.W)),Mux(ren,psram_array.io.rdata,dout_data)) // dout_data is 32 bits
+  
 
   switch(state) {
     is (s_cmd)  { counter := Mux(!io.ce_n,Mux(counter < cmd_cycle, counter + 1.U,0.U),0.U)  
-                  state := Mux(counter < cmd_cycle,  s_cmd, s_addr) } 
+                  state := Mux(counter < cmd_cycle,  s_cmd, 
+                            Mux(is_quad_cmd,s_cmd,s_addr)) } 
     is (s_addr) { counter := Mux(counter < addr_cycle, counter + 1.U,0.U)
                   state := Mux(counter < addr_cycle, s_addr, 
                   Mux(cmd === SPI_CMD_QUAD_READ,  s_wait, s_data)) }

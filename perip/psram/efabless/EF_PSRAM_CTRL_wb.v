@@ -39,9 +39,10 @@ module EF_PSRAM_CTRL_wb (
     output  wire [3:0]      douten
 );
 
-    localparam  ST_IDLE = 1'b0,
-                ST_WAIT = 1'b1;
-
+    localparam  [1:0]   ST_IDLE = 2'b00,
+                        ST_WAIT = 2'b01,
+                        QPI_INIT = 2'b10;
+    
     wire        mr_sck;
     wire        mr_ce_n;
     wire [3:0]  mr_din;
@@ -54,12 +55,19 @@ module EF_PSRAM_CTRL_wb (
     wire [3:0]  mw_dout;
     wire        mw_doe;
 
+    wire        qpi_sck;
+    wire        qpi_ce_n;
+    wire [3:0]  qpi_dout;
+    wire        qpi_doe;
+
     // PSRAM Reader and Writer wires
     wire        mr_rd;
     wire        mr_done;
     wire        mw_wr;
     wire        mw_done;
-
+    wire        qpi_init;
+    wire        qpi_init_done;
+    wire        is_qpi_init;
     //wire        doe;
 
     // WB Control Signals
@@ -69,10 +77,12 @@ module EF_PSRAM_CTRL_wb (
     //wire[3:0]   wb_byte_sel     =   sel_i & {4{wb_we}};
 
     // The FSM
-    reg         state, nstate;
+    reg    [1:0]    state, nstate;
+    reg             is_qpi;
     always @ (posedge clk_i or posedge rst_i)
         if(rst_i)
             state <= ST_IDLE;
+            // state <= QPI_INIT;
         else
             state <= nstate;
 
@@ -89,6 +99,17 @@ module EF_PSRAM_CTRL_wb (
                     nstate = ST_IDLE;
                 else
                     nstate = ST_WAIT;
+            QPI_INIT:
+                if(qpi_init_done) begin
+                    nstate = ST_IDLE;
+                    is_qpi = 1'b1;
+                end
+                else
+                    nstate = QPI_INIT;
+            default: begin
+                is_qpi = 1'b0;
+                nstate = ST_IDLE;
+            end
         endcase
     end
 
@@ -129,10 +150,12 @@ module EF_PSRAM_CTRL_wb (
 
     assign mr_rd    = ( (state==ST_IDLE ) & wb_re );
     assign mw_wr    = ( (state==ST_IDLE ) & wb_we );
+    assign qpi_init = (state == QPI_INIT);
 
     PSRAM_READER MR (
         .clk(clk_i),
         .rst_n(~rst_i),
+        .is_qpi(is_qpi),
         .addr({adr_i[23:2],2'b0}),
         .rd(mr_rd),
         //.size(size), Always read a word
@@ -149,6 +172,7 @@ module EF_PSRAM_CTRL_wb (
     PSRAM_WRITER MW (
         .clk(clk_i),
         .rst_n(~rst_i),
+        .is_qpi(is_qpi),
         .addr({adr_i[23:0]}),
         .wr(mw_wr),
         .size(size),
@@ -161,12 +185,87 @@ module EF_PSRAM_CTRL_wb (
         .douten(mw_doe)
     );
 
-    assign sck  = wb_we ? mw_sck  : mr_sck;
-    assign ce_n = wb_we ? mw_ce_n : mr_ce_n;
-    assign dout = wb_we ? mw_dout : mr_dout;
-    assign douten  = wb_we ? {4{mw_doe}}  : {4{mr_doe}};
+    PSRAM_QPI_INIT qpi (
+        .clk(clk_i),
+        .rst_n(~rst_i),
+        .qpi_init(qpi_init),
+        .done(qpi_init_done),
+        .sck(qpi_sck),
+        .ce_n(qpi_ce_n),
+        .dout(qpi_dout),
+        .douten(qpi_doe)
+    );
+    assign is_qpi_init = (state == QPI_INIT);
+    assign sck      = is_qpi_init? qpi_sck : (wb_we ? mw_sck  : mr_sck);
+    assign ce_n     = is_qpi_init? qpi_ce_n : (wb_we ? mw_ce_n : mr_ce_n);
+    assign dout     = is_qpi_init? qpi_dout : (wb_we ? mw_dout : mr_dout);
+    assign douten   = is_qpi_init? {4{qpi_doe}} : (wb_we ? {4{mw_doe}}  : {4{mr_doe}});
 
     assign mw_din = din;
     assign mr_din = din;
-    assign ack_o = wb_we ? mw_done :mr_done ;
+    assign ack_o = is_qpi_init? qpi_init_done : ( wb_we ? mw_done :mr_done );
+
+endmodule
+
+
+module PSRAM_QPI_INIT (
+    input   wire        clk,
+    input   wire        rst_n,
+    input   wire        qpi_init,
+    output  reg         done,
+    output  reg         sck,
+    output  reg         ce_n,
+    output  reg [3:0]   dout,
+    output              douten
+);
+
+    localparam  IDLE = 1'b0,
+                INIT = 1'b1;
+
+    reg state, nstate;
+    
+    reg [3:0]   counter;
+
+    wire[7:0]  CMD_35H = 8'h35; // Command to enter QPI mode
+
+    always @*
+        case (state)
+            IDLE: if(qpi_init) nstate = INIT; else nstate = IDLE;
+            INIT: if(done) nstate = IDLE; else nstate = INIT;
+        endcase
+
+    always @ (posedge clk or negedge rst_n)
+        if(!rst_n) state <= IDLE;
+        else state <= nstate;
+
+    // Drive the Serial Clock (sck) @ clk/2
+    always @ (posedge clk or negedge rst_n)
+        if(!rst_n)
+            sck <= 1'b0;
+        else if(~ce_n)
+            sck <= ~ sck;
+        else if(state == IDLE)
+            sck <= 1'b0;
+
+    // ce_n logic
+    always @ (posedge clk or negedge rst_n)
+        if(!rst_n)
+            ce_n <= 1'b1;
+        else if(state == INIT)
+            ce_n <= 1'b0;
+        else
+            ce_n <= 1'b1;
+
+    always @ (posedge clk or negedge rst_n)
+        if(!rst_n)
+            counter <= 4'b0;
+        else if(sck & ~done)
+            counter <= counter + 1'b1;
+        else if(state == IDLE)
+            counter <= 4'b0;
+
+    assign dout     = (counter <= 8)   ?   {3'b0, CMD_35H[7 - counter]} : 4'hf;
+    assign douten   = (~ce_n);
+    assign done     = (counter == 9 );
+
 endmodule
