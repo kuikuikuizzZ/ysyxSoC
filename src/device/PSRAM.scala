@@ -12,35 +12,7 @@ import freechips.rocketchip.util._
 import ysyx.Constants._
 
 
-object NegRegInit {
-  def apply[T <: Data](initValue: T, clockVal: Bool, resetVal: Bool): T = {
-    val negClock = (~ clockVal.asUInt).asBool.asClock
 
-    withClockAndReset(negClock, resetVal) {
-      RegInit(initValue)
-    }
-  }
-}
-
-object SCKRegInit {
-  def apply[T <: Data](initValue: T, clockVal: Bool, resetVal: Bool): T = {
-    val clk = (clockVal.asUInt).asBool.asClock
-
-    withClockAndReset(clk, resetVal.asAsyncReset) {
-      RegInit(initValue)
-    }
-  }
-}
-
-object RegSynRetInit {
-  def apply[T <: Data](initValue: T, clockVal: Bool, resetVal: Bool): T = {
-    val clk = (clockVal.asUInt).asBool.asClock
-
-    withClockAndReset(clk, resetVal.asBool) {
-      RegInit(initValue)
-    }
-  }
-}
 
 
 class QSPIIO extends Bundle {

@@ -21,7 +21,7 @@ trait AddrConst {
   // val PSRAM_SIZE    =     0x20000000.asUInt(32.W)
 }
 
-trait CmdConst {
+trait SPICmdConst {
   val SPI_CMD_X           =     0x00.asUInt(8.W)   // write command
   val SPI_CMD_READ        =     0x03.asUInt(8.W)   // read command
   val SPI_CMD_QUAD_READ   =     0xeb.asUInt(8.W)   // quad read command
@@ -31,8 +31,22 @@ trait CmdConst {
   val SPI_CMD_SET_BURST   =     0xc0.asUInt(8.W)
 }
 
+trait SdramCmdConst { 
+  val SDRAM_CMD_W             = "b1111".U;
+  val SDRAM_CMD_NOP           = "b0111".U;
+  val SDRAM_CMD_ACTIVE        = "b0011".U;
+  val SDRAM_CMD_READ          = "b0101".U;
+  val SDRAM_CMD_WRITE         = "b0100".U;
+  val SDRAM_CMD_TERMINATE     = "b0110".U;
+  val SDRAM_CMD_PRECHARGE     = "b0010".U;
+  val SDRAM_CMD_REFRESH       = "b0001".U;
+  val SDRAM_CMD_LOAD_MODE     = "b0000".U;
+}
+
+
 object Constants extends
    AddrConst with 
-    CmdConst 
+    SPICmdConst with
+    SdramCmdConst
 {
 }
