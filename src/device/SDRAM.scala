@@ -93,7 +93,8 @@ class sdramPmem extends BlackBox with HasBlackBoxInline {
       |    else
       |      rdata_ext = 32'd0;
       |  end
-      |  always @(posedge clock) begin
+      |  // always @(posedge clock) begin
+      |  always @(negedge clock) begin
       |   if (wen)
       |      sdram_write(row_ext,col_ext,ba_ext,dqm_ext, wdata_ext);
       |  end
@@ -118,25 +119,25 @@ class sdramChisel (read_max_length:Int = 4) extends RawModule {
   pmem.io.reset := reset.asBool
   
   val cmd = Cat(io.cs,io.ras,io.cas,io.we)
-  val CAS_latency     =     SCKRegInit(0.U(2.W),io.clk,reset)
-  val burst_length    =     SCKRegInit(0.U(3.W),io.clk,reset)
-  val row             =     SCKRegInit(0.U(13.W),io.clk,reset) // row address
-  val state           =     SCKRegInit(s_idle,io.clk,reset)
-  val last_cmd        =     SCKRegInit(0.U(4.W),io.clk,reset)
-  val bl_cnt          =     SCKRegInit(0.U(3.W),io.clk,reset)
-  val col_reg         =     SCKRegInit(0.U(9.W),io.clk,reset)
+  val CAS_latency     =     NegRegInit(0.U(2.W),io.clk,reset)
+  val burst_length    =     NegRegInit(0.U(3.W),io.clk,reset)
+  val row             =     NegRegInit(0.U(13.W),io.clk,reset) // row address
+  val state           =     NegRegInit(s_idle,io.clk,reset)
+  val last_cmd        =     NegRegInit(0.U(4.W),io.clk,reset)
+  val bl_cnt          =     NegRegInit(0.U(3.W),io.clk,reset)
+  val col_reg         =     NegRegInit(0.U(9.W),io.clk,reset)
   // val col             =     Wire(0.U(9.W))
   // val ba              =     Wire(0.U(2.W)) // bank address
   // val dqm             =     Wire(3.U(2.W))
   // val read_cmd        =     Wire(0.U(4.W))
   // val dq              =     SCKRegInit(0.U(16.W),io.clk,reset)
 
-  val read_col_vec    =     SCKReg(Vec(read_max_length,UInt(9.W)),io.clk,reset)
-  val read_ba_vec     =     SCKReg(Vec(read_max_length,UInt(2.W)),io.clk,reset)
-  val read_cmd_vec    =     SCKReg(Vec(read_max_length,UInt(4.W)),io.clk,reset)
-  val read_dqm_vec    =     SCKReg(Vec(read_max_length,UInt(2.W)),io.clk,reset)
-  val read_valid_vec  =     SCKReg(Vec(read_max_length,Bool()),io.clk,reset)
-  val read_bl_vec     =     SCKReg(Vec(read_max_length,UInt(3.W)),io.clk,reset)
+  val read_col_vec    =     NegReg(Vec(read_max_length,UInt(9.W)),io.clk,reset)
+  val read_ba_vec     =     NegReg(Vec(read_max_length,UInt(2.W)),io.clk,reset)
+  val read_cmd_vec    =     NegReg(Vec(read_max_length,UInt(4.W)),io.clk,reset)
+  val read_dqm_vec    =     NegReg(Vec(read_max_length,UInt(2.W)),io.clk,reset)
+  val read_valid_vec  =     NegReg(Vec(read_max_length,Bool()),io.clk,reset)
+  val read_bl_vec     =     NegReg(Vec(read_max_length,UInt(3.W)),io.clk,reset)
   // val read_col        =     Wire(0.U(9.W))
   val read_bl         =     Wire(UInt(3.W))
   val read_cas        =     CAS_latency - 1.U
@@ -167,7 +168,7 @@ class sdramChisel (read_max_length:Int = 4) extends RawModule {
   val offset         =  Mux(is_write || state === s_write, w_offset, r_offset)
   // when in read mode, read_col_vec is used to select the column.
   // when in write mode, col should keep io.a until bl_cnt is 0.
-  val col            =  Mux(is_read || state === s_read,read_col_vec(read_cas), Mux(is_write, io.a(8,0),col_reg))
+  val col            =  Mux(is_write, io.a(8,0),Mux(is_read || state === s_read,read_col_vec(read_cas) ,col_reg))
   val read_col       =  Mux(is_read, io.a(8,0), col_reg) 
 
   CAS_latency       :=  Mux(is_load_mode, io.a(5,4), CAS_latency)

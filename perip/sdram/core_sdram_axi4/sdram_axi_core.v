@@ -80,7 +80,7 @@ localparam SDRAM_DQM_W           = 2;
 localparam SDRAM_BANKS           = 2 ** SDRAM_BANK_W;
 localparam SDRAM_ROW_W           = SDRAM_ADDR_W - SDRAM_COL_W - SDRAM_BANK_W;
 localparam SDRAM_REFRESH_CNT     = 2 ** SDRAM_ROW_W;
-localparam SDRAM_START_DELAY     = 100000 / (1000 / SDRAM_MHZ); // 100uS
+localparam SDRAM_START_DELAY     = 50000 / (1000 / SDRAM_MHZ); // 100uS
 localparam SDRAM_REFRESH_CYCLES  = (64000*SDRAM_MHZ) / SDRAM_REFRESH_CNT-1;
 
 localparam CMD_W             = 4;
@@ -472,7 +472,8 @@ always @ (posedge clk_i or posedge rst_i)
 if (rst_i)
     sample_data_q <= {SDRAM_DATA_W{1'b0}};
 else
-    sample_data_q <= sample_data0_q;
+    // sample_data_q <= sample_data0_q;
+    sample_data_q <= sdram_data_in_w;
 
 //-----------------------------------------------------------------
 // Command Output
