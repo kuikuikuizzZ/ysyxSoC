@@ -24,12 +24,42 @@ object SCKRegInit {
   }
 }
 
+object SCKReg {
+  def apply[T <: Data](_type: T, clockVal: Bool, resetVal: Bool): T = {
+    val clk = (clockVal.asUInt).asBool.asClock
+
+    withClockAndReset(clk, resetVal.asAsyncReset) {
+      Reg(_type)
+    }
+  }
+}
+
+object NegReg {
+  def apply[T <: Data](_type: T, clockVal: Bool, resetVal: Bool): T = {
+    val clk = (~clockVal.asUInt).asBool.asClock
+
+    withClockAndReset(clk, resetVal.asAsyncReset) {
+      Reg(_type)
+    }
+  }
+}
+
 object RegSynRetInit {
   def apply[T <: Data](initValue: T, clockVal: Bool, resetVal: Bool): T = {
     val clk = (clockVal.asUInt).asBool.asClock
 
     withClockAndReset(clk, resetVal.asBool) {
       RegInit(initValue)
+    }
+  }
+}
+
+object RegEnableSynRet {
+  def apply[T <: Data](value: T,initValue: T, cond: Bool,clockVal: Bool, resetVal: Bool): T = {
+    val clk = (clockVal.asUInt).asBool.asClock
+
+    withClockAndReset(clk, resetVal.asBool) {
+      RegEnable(value,initValue,cond)
     }
   }
 }
