@@ -22,7 +22,21 @@ class SDRAMIO extends Bundle {
   val a   = Output(UInt(13.W))
   val ba  = Output(UInt(2.W))
   val dqm = Output(UInt(2.W))
+  val b   = Output(Bool())
   val dq  = Analog(16.W)
+}
+
+class SDRAMPadIO extends Bundle {
+  val clk = Output(Bool())
+  val cke = Output(Bool())
+  val cs  = Output(Bool())
+  val ras = Output(Bool())
+  val cas = Output(Bool())
+  val we  = Output(Bool())
+  val a   = Output(UInt(13.W))
+  val ba  = Output(UInt(2.W))
+  val dqm = Output(UInt(4.W))
+  val dq = Vec(2,Analog(16.W))
 }
 
 class sdramPmemIO extends Bundle {
@@ -31,6 +45,7 @@ class sdramPmemIO extends Bundle {
   val row         = Input(UInt(13.W))
   val col         = Input(UInt(9.W))
   val ba          = Input(UInt(2.W))
+  val b           = Input(Bool())
   val wen         = Input(Bool())
   val ren         = Input(Bool())
   val dqm         = Input(UInt(2.W))
@@ -38,12 +53,13 @@ class sdramPmemIO extends Bundle {
   val rdata       = Output(UInt(16.W))
 }
 
+
 class sdram_top_axi extends BlackBox {
   val io = IO(new Bundle {
     val clock = Input(Clock())
     val reset = Input(Bool())
     val in = Flipped(new AXI4Bundle(AXI4BundleParameters(addrBits = 32, dataBits = 32, idBits = 4)))
-    val sdram = new SDRAMIO
+    val sdram = new SDRAMPadIO
   })
 }
 
@@ -52,7 +68,7 @@ class sdram_top_apb extends BlackBox {
     val clock = Input(Clock())
     val reset = Input(Bool())
     val in = Flipped(new APBBundle(APBBundleParameters(addrBits = 32, dataBits = 32)))
-    val sdram = new SDRAMIO
+    val sdram = new SDRAMPadIO
   })
 }
 
@@ -65,6 +81,7 @@ class sdramPmem extends BlackBox with HasBlackBoxInline {
       |  input                reset,
       |  input                wen,
       |  input                ren,
+      |  input                b,
       |  input       [12:0]   row,
       |  input       [8:0]    col,
       |  input       [1:0]    ba,
@@ -72,15 +89,17 @@ class sdramPmem extends BlackBox with HasBlackBoxInline {
       |  input       [15:0]   wdata,
       |  output reg  [15:0]   rdata
       |);
-      |import "DPI-C" function void sdram_read (input int row, input int col, input int ba, input int dqm , output int data);
-      |import "DPI-C" function void sdram_write(input int row, input int col, input int ba, input int dqm , input int data);
+      |import "DPI-C" function void sdram_read (input int bit_ext, input int row, input int col, input int ba, input int dqm , output int data);
+      |import "DPI-C" function void sdram_write(input int bit_ext, input int row, input int col, input int ba, input int dqm , input int data);
       |  wire [31:0] row_ext ;
       |  wire [31:0] col_ext; 
       |  wire [31:0] ba_ext; 
       |  wire [31:0] dqm_ext;
       |  wire [31:0] wdata_ext; 
+      |  wire [31:0] bit_ext;
       |  reg [31:0] rdata_ext;
       |  
+      |  assign bit_ext   = {31'd0,b};
       |  assign row_ext   = {19'd0,row};
       |  assign col_ext   = {23'd0,col};
       |  assign ba_ext    = {30'd0,ba};
@@ -89,14 +108,14 @@ class sdramPmem extends BlackBox with HasBlackBoxInline {
       |  assign rdata     = rdata_ext[15:0];
       |  always @(*) begin
       |    if (ren ) 
-      |      sdram_read(row_ext,col_ext,ba_ext,dqm_ext, rdata_ext);
+      |      sdram_read(bit_ext,row_ext,col_ext,ba_ext,dqm_ext, rdata_ext);
       |    else
       |      rdata_ext = 32'd0;
       |  end
       |  // always @(posedge clock) begin
       |  always @(negedge clock) begin
       |   if (wen)
-      |      sdram_write(row_ext,col_ext,ba_ext,dqm_ext, wdata_ext);
+      |      sdram_write(bit_ext,row_ext,col_ext,ba_ext,dqm_ext, wdata_ext);
       |  end
       |endmodule
     """.stripMargin)
@@ -104,6 +123,37 @@ class sdramPmem extends BlackBox with HasBlackBoxInline {
 
 class sdram extends BlackBox {
   val io = IO(Flipped(new SDRAMIO))
+}
+
+class sdramPad extends RawModule{
+  val io = IO(Flipped(new SDRAMPadIO))
+  
+  val sdram0 = Module(new sdramChisel)
+  val sdram1 = Module(new sdramChisel)
+
+  sdram0.io.clk  := io.clk  
+  sdram0.io.cke  := io.cke  
+  sdram0.io.cs   := io.cs    
+  sdram0.io.ras  := io.ras  
+  sdram0.io.cas  := io.cas  
+  sdram0.io.we   := io.we    
+  sdram0.io.a    := io.a    
+  sdram0.io.ba   := io.ba    
+  sdram0.io.b    := 0.U 
+  sdram0.io.dqm  := io.dqm(1,0)  
+  sdram0.io.dq   <> io.dq(0)
+
+  sdram1.io.clk  := io.clk  
+  sdram1.io.cke  := io.cke  
+  sdram1.io.cs   := io.cs    
+  sdram1.io.ras  := io.ras  
+  sdram1.io.cas  := io.cas  
+  sdram1.io.we   := io.we    
+  sdram1.io.a    := io.a    
+  sdram1.io.ba   := io.ba   
+  sdram1.io.b   := 1.U 
+  sdram1.io.dqm  := io.dqm(3,2) 
+  sdram1.io.dq   <> io.dq(1)
 }
 
 class sdramChisel (read_max_length:Int = 4) extends RawModule {
@@ -184,7 +234,7 @@ class sdramChisel (read_max_length:Int = 4) extends RawModule {
   read_bl_vec       :=  Mux(state === s_read || is_read, VecInit(read_bl  +:read_bl_vec.init     )  ,  VecInit(Seq.fill(read_max_length)(0.U(3.W))))
   read_bl           :=  Mux(is_read, burst_length, 
                             Mux(read_bl_vec(0) === 0.U, 0.U,read_bl_vec(0)-1.U)) 
-
+  pmem.io.b       := io.b
   pmem.io.row     := row
   pmem.io.col     := col + offset
   pmem.io.ba      := ba
@@ -264,7 +314,7 @@ class AXI4SDRAM(address: Seq[AddressSet])(implicit p: Parameters) extends LazyMo
   lazy val module = new Impl
   class Impl extends LazyModuleImp(this) {
     val (in, _) = node.in(0)
-    val sdram_bundle = IO(new SDRAMIO)
+    val sdram_bundle = IO(new SDRAMPadIO)
 
     val msdram = Module(new sdram_top_axi)
     msdram.io.clock := clock
@@ -286,7 +336,7 @@ class APBSDRAM(address: Seq[AddressSet])(implicit p: Parameters) extends LazyMod
   lazy val module = new Impl
   class Impl extends LazyModuleImp(this) {
     val (in, _) = node.in(0)
-    val sdram_bundle = IO(new SDRAMIO)
+    val sdram_bundle = IO(new SDRAMPadIO)
 
     val msdram = Module(new sdram_top_apb)
     msdram.io.clock := clock
