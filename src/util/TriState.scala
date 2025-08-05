@@ -36,3 +36,22 @@ object TriStateInBuf {
     buf.io.din
   }
 }
+
+class AnalogSwitch extends Module {
+  val io = IO(new Bundle {
+    val sel      = Input(Bool())               // 选择信号
+    val analogIn = Vec(2, Analog(16.W)) // 两组输入信号
+    val analogOut = Analog(16.W)               // 输出信号
+  })
+
+  // 禁止未选中的输入驱动总线
+  io.analogIn(0) <> DontCare
+  io.analogIn(1) <> DontCare
+
+  // 条件连接：仅选中的输入与输出连通
+  when (io.sel) {
+    io.analogIn(1) <> io.analogOut  // sel=true 时连接第二路
+  } .otherwise {
+    io.analogIn(0) <> io.analogOut  // sel=false 时连接第一路
+  }
+}

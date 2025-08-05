@@ -23,6 +23,7 @@ class SDRAMIO extends Bundle {
   val ba  = Output(UInt(2.W))
   val dqm = Output(UInt(2.W))
   val b   = Output(Bool())
+  val w   = Output(Bool())
   val dq  = Analog(16.W)
 }
 
@@ -34,9 +35,9 @@ class SDRAMPadIO extends Bundle {
   val cas = Output(Bool())
   val we  = Output(Bool())
   val a   = Output(UInt(13.W))
-  val ba  = Output(UInt(2.W))
+  val ba  = Output(UInt(3.W))
   val dqm = Output(UInt(4.W))
-  val dq = Vec(2,Analog(16.W))
+  val dq = Vec(4,Analog(16.W))
 }
 
 class sdramPmemIO extends Bundle {
@@ -44,8 +45,9 @@ class sdramPmemIO extends Bundle {
   val reset       = Input(Bool())
   val row         = Input(UInt(13.W))
   val col         = Input(UInt(9.W))
-  val ba          = Input(UInt(2.W))
+  val ba          = Input(UInt(3.W))
   val b           = Input(Bool())
+  val word        = Input(Bool())
   val wen         = Input(Bool())
   val ren         = Input(Bool())
   val dqm         = Input(UInt(2.W))
@@ -82,40 +84,43 @@ class sdramPmem extends BlackBox with HasBlackBoxInline {
       |  input                wen,
       |  input                ren,
       |  input                b,
+      |  input                word,
       |  input       [12:0]   row,
       |  input       [8:0]    col,
-      |  input       [1:0]    ba,
+      |  input       [2:0]    ba,
       |  input       [1:0]    dqm,
       |  input       [15:0]   wdata,
       |  output reg  [15:0]   rdata
       |);
-      |import "DPI-C" function void sdram_read (input int bit_ext, input int row, input int col, input int ba, input int dqm , output int data);
-      |import "DPI-C" function void sdram_write(input int bit_ext, input int row, input int col, input int ba, input int dqm , input int data);
+      |import "DPI-C" function void sdram_read (input int word_ext,input int bit_ext, input int row, input int col, input int ba, input int dqm , output int data);
+      |import "DPI-C" function void sdram_write(input int word_ext,input int bit_ext, input int row, input int col, input int ba, input int dqm , input int data);
       |  wire [31:0] row_ext ;
       |  wire [31:0] col_ext; 
       |  wire [31:0] ba_ext; 
       |  wire [31:0] dqm_ext;
       |  wire [31:0] wdata_ext; 
       |  wire [31:0] bit_ext;
+      |  wire [31:0] word_ext;
       |  reg [31:0] rdata_ext;
       |  
       |  assign bit_ext   = {31'd0,b};
+      |  assign word_ext  = {31'd0,word};
       |  assign row_ext   = {19'd0,row};
       |  assign col_ext   = {23'd0,col};
-      |  assign ba_ext    = {30'd0,ba};
+      |  assign ba_ext    = {29'd0,ba};
       |  assign dqm_ext   = {30'd0,dqm};
       |  assign wdata_ext = {16'd0,wdata};
       |  assign rdata     = rdata_ext[15:0];
       |  always @(*) begin
       |    if (ren ) 
-      |      sdram_read(bit_ext,row_ext,col_ext,ba_ext,dqm_ext, rdata_ext);
+      |      sdram_read(word_ext,bit_ext,row_ext,col_ext,ba_ext,dqm_ext, rdata_ext);
       |    else
       |      rdata_ext = 32'd0;
       |  end
       |  // always @(posedge clock) begin
       |  always @(negedge clock) begin
       |   if (wen)
-      |      sdram_write(bit_ext,row_ext,col_ext,ba_ext,dqm_ext, wdata_ext);
+      |      sdram_write(word_ext,bit_ext,row_ext,col_ext,ba_ext,dqm_ext, wdata_ext);
       |  end
       |endmodule
     """.stripMargin)
@@ -130,30 +135,69 @@ class sdramPad extends RawModule{
   
   val sdram0 = Module(new sdramChisel)
   val sdram1 = Module(new sdramChisel)
+  val sdram2 = Module(new sdramChisel)
+  val sdram3 = Module(new sdramChisel)
 
+  val cmd = Cat(io.cs,io.ras,io.cas,io.we)
+  val update_ba2 = cmd === SDRAM_CMD_WRITE || cmd === SDRAM_CMD_READ || cmd === SDRAM_CMD_ACTIVE
+  val is_load_mode = cmd === SDRAM_CMD_LOAD_MODE
+  val last_ba2 = SCKRegInit(false.B,io.clk,!io.cke)
+  val ba2 = Mux(update_ba2, io.ba(2),last_ba2)
+
+  last_ba2  := Mux(update_ba2, io.ba(2),last_ba2)
+
+  
   sdram0.io.clk  := io.clk  
   sdram0.io.cke  := io.cke  
-  sdram0.io.cs   := io.cs    
+  sdram0.io.cs   := (io.cs || ba2) && !is_load_mode  
   sdram0.io.ras  := io.ras  
   sdram0.io.cas  := io.cas  
   sdram0.io.we   := io.we    
   sdram0.io.a    := io.a    
-  sdram0.io.ba   := io.ba    
+  sdram0.io.ba   := io.ba(1,0)
+  sdram0.io.w    := ba2  
   sdram0.io.b    := 0.U 
   sdram0.io.dqm  := io.dqm(1,0)  
   sdram0.io.dq   <> io.dq(0)
 
   sdram1.io.clk  := io.clk  
   sdram1.io.cke  := io.cke  
-  sdram1.io.cs   := io.cs    
+  sdram1.io.cs   := (io.cs || ba2) && !is_load_mode  
   sdram1.io.ras  := io.ras  
   sdram1.io.cas  := io.cas  
   sdram1.io.we   := io.we    
   sdram1.io.a    := io.a    
-  sdram1.io.ba   := io.ba   
-  sdram1.io.b   := 1.U 
+  sdram1.io.ba   := io.ba(1,0)
+  sdram1.io.w    := ba2
+  sdram1.io.b    := 1.U 
   sdram1.io.dqm  := io.dqm(3,2) 
   sdram1.io.dq   <> io.dq(1)
+
+  sdram2.io.clk  := io.clk  
+  sdram2.io.cke  := io.cke  
+  sdram2.io.cs   := (io.cs || !ba2) && !is_load_mode  
+  sdram2.io.ras  := io.ras  
+  sdram2.io.cas  := io.cas  
+  sdram2.io.we   := io.we    
+  sdram2.io.a    := io.a    
+  sdram2.io.ba   := io.ba(1,0)
+  sdram2.io.w    := ba2
+  sdram2.io.b    := 0.U 
+  sdram2.io.dqm  := io.dqm(1,0)  
+  sdram2.io.dq   <> io.dq(2)
+
+  sdram3.io.clk  := io.clk  
+  sdram3.io.cke  := io.cke  
+  sdram3.io.cs   := (io.cs || !ba2) && !is_load_mode  
+  sdram3.io.ras  := io.ras  
+  sdram3.io.cas  := io.cas  
+  sdram3.io.we   := io.we    
+  sdram3.io.a    := io.a    
+  sdram3.io.ba   := io.ba(1,0)
+  sdram3.io.w    := ba2
+  sdram3.io.b    := 1.U 
+  sdram3.io.dqm  := io.dqm(3,2) 
+  sdram3.io.dq   <> io.dq(3)
 }
 
 class sdramChisel (read_max_length:Int = 4) extends RawModule {
@@ -183,7 +227,7 @@ class sdramChisel (read_max_length:Int = 4) extends RawModule {
   // val dq              =     SCKRegInit(0.U(16.W),io.clk,reset)
 
   val read_col_vec    =     NegReg(Vec(read_max_length,UInt(9.W)),io.clk,reset)
-  val read_ba_vec     =     NegReg(Vec(read_max_length,UInt(2.W)),io.clk,reset)
+  val read_ba_vec     =     NegReg(Vec(read_max_length,UInt(3.W)),io.clk,reset)
   val read_cmd_vec    =     NegReg(Vec(read_max_length,UInt(4.W)),io.clk,reset)
   val read_dqm_vec    =     NegReg(Vec(read_max_length,UInt(2.W)),io.clk,reset)
   val read_valid_vec  =     NegReg(Vec(read_max_length,Bool()),io.clk,reset)
@@ -210,8 +254,8 @@ class sdramChisel (read_max_length:Int = 4) extends RawModule {
  
   val ren            =  state === s_read && read_bl_vec(read_cas) =/= 0.U
   val wen            =  (is_write) || ( last_write   && bl_cnt =/= 0.U)
-  val ba             =  Mux(is_read || state === s_read,read_ba_vec(read_cas),  io.ba)
-  val dqm            =  Mux(is_read || state === s_read,read_dqm_vec(read_cas), io.dqm)
+  val ba             =  Mux(is_write, io.ba, Mux(is_read || state === s_read,read_ba_vec(read_cas),io.ba))
+  val dqm            =  Mux(is_write, io.dqm, Mux(is_read || state === s_read,read_dqm_vec(read_cas), io.dqm))
   val read_cmd       =  Mux(is_read || state === s_read,read_cmd_vec(read_cas), cmd)
   val w_offset       =  Mux(is_write, 0.U, burst_length - bl_cnt)     
   val r_offset       =  burst_length-read_bl_vec(read_cas)
@@ -226,15 +270,18 @@ class sdramChisel (read_max_length:Int = 4) extends RawModule {
   row               :=  Mux(is_active    , io.a,      row) 
   col_reg           :=  Mux(is_write || is_read, io.a(8,0), col_reg)
   last_cmd          :=  Mux(is_nop,last_cmd,cmd)
+  read_bl           :=  Mux(is_read, burst_length, 
+                            Mux(read_bl_vec(0) === 0.U, 0.U,read_bl_vec(0)-1.U)) 
+
   read_valid_vec    :=  Mux(state === s_read || is_read, VecInit(!is_nop +:read_valid_vec.init  ),  VecInit(Seq.fill(read_max_length)(false.B)))
   read_cmd_vec      :=  Mux(state === s_read || is_read, VecInit( cmd    +:read_cmd_vec.init    )   ,  VecInit(Seq.fill(read_max_length)(0.U(4.W))))
   read_dqm_vec      :=  Mux(state === s_read || is_read, VecInit(io.dqm  +:read_dqm_vec.init    ) ,  VecInit(Seq.fill(read_max_length)(0.U(2.W))))
-  read_ba_vec       :=  Mux(state === s_read || is_read, VecInit(io.ba   +:read_ba_vec.init     )  ,  VecInit(Seq.fill(read_max_length)(0.U(2.W))))
+  read_ba_vec       :=  Mux(state === s_read || is_read, VecInit(io.ba   +:read_ba_vec.init     )  ,  VecInit(Seq.fill(read_max_length)(0.U(3.W))))
   read_col_vec      :=  Mux(state === s_read || is_read, VecInit(read_col   +:read_col_vec.init)    ,  VecInit(Seq.fill(read_max_length)(0.U(9.W))))
   read_bl_vec       :=  Mux(state === s_read || is_read, VecInit(read_bl  +:read_bl_vec.init     )  ,  VecInit(Seq.fill(read_max_length)(0.U(3.W))))
-  read_bl           :=  Mux(is_read, burst_length, 
-                            Mux(read_bl_vec(0) === 0.U, 0.U,read_bl_vec(0)-1.U)) 
+  
   pmem.io.b       := io.b
+  pmem.io.word    := io.w 
   pmem.io.row     := row
   pmem.io.col     := col + offset
   pmem.io.ba      := ba
