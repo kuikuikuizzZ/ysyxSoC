@@ -68,7 +68,7 @@ module sdram_axi_core
 // Key Params
 //-----------------------------------------------------------------
 parameter SDRAM_MHZ              = 50;
-parameter SDRAM_ADDR_W           = 26;
+parameter SDRAM_ADDR_W           = 25;
 parameter SDRAM_COL_W            = 9;
 parameter SDRAM_READ_LATENCY     = 2;
 
@@ -565,6 +565,7 @@ begin
         addr_q        <= addr_row_w;
         bank_q        <= addr_bank_w;
 
+        row_open_q                 <= {SDRAM_BANKS{1'b0}};
         active_row_q[addr_bank_w]  <= addr_row_w;
         row_open_q[addr_bank_w]    <= 1'b1;
     end
