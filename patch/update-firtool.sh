@@ -71,3 +71,6 @@ update_firtool() {
 # Call update_firtool with version and patch directory
 # e.g. update_firtool 1.105.0 `pwd`/patch/firtool
 # update_firtool $1 $2
+if $(uname -s) == "Linux"; then 
+    update_firtool $1 $2
+fi
