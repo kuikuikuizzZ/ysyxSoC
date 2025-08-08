@@ -17,8 +17,15 @@ trait AddrConst {
   val SPI_TX0       =     0x00.asUInt(32.W)
   val SPI_SS        =     0x18.asUInt(32.W)   
   val SPI_SS_FLASH  =     0x01.asUInt(8.W)     
+
   // val PSRAM_BASE    =     0x80000000.asUInt(32.W)
   // val PSRAM_SIZE    =     0x20000000.asUInt(32.W)
+
+  // GPIO
+  val GPIO_BASE      =     0x10002000.asUInt(32.W)
+  val GPIO_LED       =     GPIO_BASE+0x00.asUInt(32.W)
+  val GPIO_SWITCH    =     GPIO_BASE+0x04.asUInt(32.W)
+  val GPIO_SEG       =     GPIO_BASE+0x08.asUInt(32.W)
 }
 
 trait SPICmdConst {
