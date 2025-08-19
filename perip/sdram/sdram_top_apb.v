@@ -47,6 +47,8 @@ localparam CMD_LOAD_MODE     = 4'b0000;
   wire [31:0] sdram_dq;
   wire [3:0]  cmd;
   reg last_ba2;
+  // word extend implements on ba, original ba[1:0],
+  // ba[2] is word extend bit.
   wire ba2 ;
   
   always @(posedge clock) begin

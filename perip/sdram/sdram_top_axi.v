@@ -38,19 +38,61 @@ module sdram_top_axi(
   output        sdram_cas,
   output        sdram_we,
   output [12:0] sdram_a,
-  output [ 1:0] sdram_ba,
-  output [ 1:0] sdram_dqm,
-  inout  [15:0] sdram_dq
+  output [ 2:0] sdram_ba,
+  output [ 3:0] sdram_dqm,
+  inout  [15:0] sdram_dq_0,
+  inout  [15:0] sdram_dq_1,
+  inout  [15:0] sdram_dq_2,
+  inout  [15:0] sdram_dq_3
 );
+//-----------------------------------------------------------------
+// Defines / Local params
+//-----------------------------------------------------------------
+localparam CMD_W             = 4;
+localparam CMD_NOP           = 4'b0111;
+localparam CMD_ACTIVE        = 4'b0011;
+localparam CMD_READ          = 4'b0101;
+localparam CMD_WRITE         = 4'b0100;
+localparam CMD_TERMINATE     = 4'b0110;
+localparam CMD_PRECHARGE     = 4'b0010;
+localparam CMD_REFRESH       = 4'b0001;
+localparam CMD_LOAD_MODE     = 4'b0000;
 
+//-----------------------------------------------------------------
+// Registers / Wires
+//-----------------------------------------------------------------
   wire sdram_dout_en;
-  wire [15:0] sdram_dout;
-  assign sdram_dq = sdram_dout_en ? sdram_dout : 16'bz;
+  wire [31:0] sdram_dout;
+  wire [31:0] sdram_dq;
+  wire [3:0]  cmd;
+  reg last_ba2;
+  // word extend implements on ba, original ba[1:0],
+  // ba[2] is word extend bit.
+  wire ba2 ;
+  
+  always @(posedge clock) begin
+    if (reset) begin
+      last_ba2 <= 1'b1;
+    end
+    if (cmd == CMD_WRITE || cmd == CMD_READ || cmd == CMD_ACTIVE)
+      last_ba2 <= sdram_ba[2];
+    else 
+      last_ba2 <= last_ba2;
+    end
+  
+  assign cmd = {sdram_cs,sdram_ras, sdram_cas, sdram_we};
+  assign ba2 = (cmd == CMD_WRITE || cmd == CMD_READ || cmd == CMD_ACTIVE) ?  sdram_ba[2] : last_ba2;
+  assign sdram_dq_0 = sdram_dout_en ? (!ba2 ? sdram_dout[15:0]  :16'bz) : 16'bz;
+  assign sdram_dq_1 = sdram_dout_en ? (!ba2 ? sdram_dout[31:16] :16'bz) : 16'bz;
+  assign sdram_dq_2 = sdram_dout_en ? ( ba2 ? sdram_dout[15:0]  :16'bz) : 16'bz;
+  assign sdram_dq_3 = sdram_dout_en ? ( ba2 ? sdram_dout[31:16] :16'bz) : 16'bz;
+  assign sdram_dq   = ba2 ? {sdram_dq_3,sdram_dq_2} : {sdram_dq_1,sdram_dq_0}  ;
+
   sdram_axi #(
     .SDRAM_MHZ(100),
-    .SDRAM_ADDR_W(24),
+    .SDRAM_ADDR_W(25),
     .SDRAM_COL_W(9),
-    .SDRAM_READ_LATENCY(2)
+    .SDRAM_READ_LATENCY(0)
   ) u_sdram_axi(
     .clk_i(clock),
     .rst_i(reset),
