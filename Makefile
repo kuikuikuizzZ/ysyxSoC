@@ -18,8 +18,8 @@ $(V_FILE_FINAL): $(SCALA_FILES)
 	sed -i '/firrtl_black_box_resource_files.f/, $$d' $@
 
 verilog: $(V_FILE_FINAL)
-	cp $(V_FILE_FINAL) $(NPC_HOME)/build/
-	cp -r $(wildcard $(SOC_HOME)/perip/*/*.v $(SOC_HOME)/perip/psram/efabless/*.v $(SOC_HOME)/perip/sdram/core_sdram_axi4/*.v )  $(NPC_HOME)/build/
+# 	cp $(V_FILE_FINAL) $(NPC_HOME)/build/
+# 	cp -r $(wildcard $(SOC_HOME)/perip/*/*.v $(SOC_HOME)/perip/psram/efabless/*.v $(SOC_HOME)/perip/sdram/core_sdram_axi4/*.v )  $(NPC_HOME)/build/
 
 clean:
 	-rm -rf build/
