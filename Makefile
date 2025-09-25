@@ -1,7 +1,7 @@
 V_FILE_GEN   = build/ysyxSoCTop.sv
 V_FILE_FINAL = build/ysyxSoCFull.v
 SCALA_FILES = $(shell find src/ -name "*.scala")
-
+SOC_HOME = $(YSYX_HOME)/ysyxSoC
 # Firtool version
 FIRTOOL_VERSION = 1.105.0
 FIRTOOL_PATCH_DIR = $(shell pwd)/patch/firtool
@@ -19,7 +19,7 @@ $(V_FILE_FINAL): $(SCALA_FILES)
 
 verilog: $(V_FILE_FINAL)
 # 	cp $(V_FILE_FINAL) $(NPC_HOME)/build/
-# 	cp -r $(wildcard $(SOC_HOME)/perip/*/*.v $(SOC_HOME)/perip/psram/efabless/*.v $(SOC_HOME)/perip/sdram/core_sdram_axi4/*.v )  $(NPC_HOME)/build/
+	cp -r $(wildcard $(SOC_HOME)/perip/*/*.v $(SOC_HOME)/perip/psram/efabless/*.v $(SOC_HOME)/perip/sdram/core_sdram_axi4/*.v)  $(SOC_HOME)/build/
 
 clean:
 	-rm -rf build/
