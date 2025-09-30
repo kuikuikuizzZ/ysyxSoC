@@ -61,18 +61,18 @@ class ysyxSoCASIC(implicit p: Parameters) extends LazyModule {
     
     // generate delayed reset for cpu, since chiplink should finish reset
     // to initialize some async modules before accept any requests from cpu
-    // cpu.module.reset := SynchronizerShiftReg(reset.asBool, 10) || reset.asBool
+    cpu.module.reset := SynchronizerShiftReg(reset.asBool, 10) || reset.asBool
 
     ////// the line above is not guaranteed to reset === 1 in first 10 cycles
-    val initCounter = RegInit(0.U(5.W))  
-    val maxCount = 10.U                  
-    val initReset = (initCounter < maxCount) 
-    when(initCounter < maxCount) {
-      initCounter := initCounter + 1.U
-    }
+    // val initCounter = RegInit(0.U(5.W))  
+    // val maxCount = 10.U                  
+    // val initReset = (initCounter < maxCount) 
+    // when(initCounter < maxCount) {
+    //   initCounter := initCounter + 1.U
+    // }
     ////// 
 
-    cpu.module.reset := initReset.asBool || reset.asBool
+    cpu.module.reset := reset.asBool
 
     val fpga_io = if (Config.hasChipLink) Some(IO(chiselTypeOf(chipMaster.get.module.fpga_io))) else None
     if (Config.hasChipLink) {
