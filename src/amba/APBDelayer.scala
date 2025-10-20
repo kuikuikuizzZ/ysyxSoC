@@ -27,7 +27,8 @@ class APBDelayerChisel extends Module {
   val state = RegInit(s_idle)
   // B2 freq 350MHz, device typical 100MHz
   // s = 2^16, r= 3.5 , s_r = 229376
-  val s_r = 229376.U(32.W)
+  // s = 2^16, r= 7 , s_r = 458752
+  val s_r = 458752.U(32.W)
   val cnt = RegInit(0.U(32.W))
   val apb_start = io.in.penable && io.in.psel 
 

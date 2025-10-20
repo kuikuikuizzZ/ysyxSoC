@@ -25,97 +25,111 @@ class ps2_top_apb extends BlackBox {
 }
 
 
-
-class PS2Keyboard extends Module {
-  val io = IO(new Bundle {
-    val nextdata_n  = Input(Bool())       // 读请求（低有效）
-    val data        = Output(UInt(8.W))
-    val ready       = Output(Bool())      // FIFO数据就绪
-    // val overflow    = Output(Bool())      // FIFO溢出标志
-    val ps2         = new PS2IO
-  })
-
-    // 寄存器声明
-    val buffer      = RegInit(0.U(10.W))    // PS/2数据缓冲
-    val fifo        = Reg(Vec(8, UInt(8.W))) // 8字节FIFO
-    val w_ptr       = RegInit(0.U(3.W))     // 写指针
-    val r_ptr       = RegInit(0.U(3.W))     // 读指针
-    val count       = RegInit(0.U(4.W))     // 位计数器
-    val ready       = RegInit(false.B)      // FIFO就绪标志
-    val overflow    = RegInit(false.B)      // 溢出标志
-  
-    // 3级同步器检测PS/2时钟下降沿[6](@ref)
-    val ps2_clk_sync = RegInit(VecInit(Seq.fill(3)(true.B)))
-    ps2_clk_sync(0) := io.ps2.clk
-    for (i <- 1 until 3) {
-      ps2_clk_sync(i) := ps2_clk_sync(i-1)
-    }
-    val sampling = ps2_clk_sync(2) && !ps2_clk_sync(1)  // 下降沿检测
-
-    // FIFO读取逻辑
-    when(ready && !io.nextdata_n) {
-      r_ptr := r_ptr + 1.U
-      when(w_ptr === (r_ptr + 1.U)) {  // FIFO变空
-        ready := false.B
-      }
-    }
-
-    // PS/2数据采样逻辑[7](@ref)
-    when(sampling) {
-      when(count === 10.U) {
-        val startBit  = !buffer(0)        // 起始位应为0
-        val stopBit   = io.ps2.data       // 停止位应为1
-        val parity    = buffer(9,1).xorR  // 奇校验位
-        
-        // 帧校验通过
-        when(startBit && stopBit && parity) {
-          fifo(w_ptr) := buffer(8,1)     // 存储8位数据
-          w_ptr := w_ptr + 1.U
-          ready := true.B
-          // 溢出检测：写指针赶上读指针[3](@ref)
-          // overflow := overflow || (r_ptr === (w_ptr + 1.U))
-        }
-        count := 0.U
-      }.otherwise {
-        buffer := (buffer << 1) | io.ps2.data  // 移位存储数据位
-        count := count + 1.U
-      }
-    }
-  
-
-    // 输出连接[2](@ref)
-    io.data     := fifo(r_ptr)
-    io.ready    := ready
-    // io.overflow := overflow
-}
-
 class ps2Chisel extends Module {
   val io = IO(new PS2CtrlIO)
   io.in  := DontCare
 
-  val ps2Ctrl = Module(new PS2Keyboard)
-  val rdata = RegInit(0.U(32.W))
-  val nextdata_n = RegInit(false.B)
-  val ready = RegInit(false.B)
+  val ps2Ctrl = Module(new ps2Keyboard)
+  val nextdata_n = RegInit(true.B)
+  val fifo = RegInit(VecInit(Seq.fill(16)(0.U(8.W))))
+  val w_ptr = RegInit(0.U(4.W))
+  val ready =RegNext(ps2Ctrl.io.ready)
+  val ready_rise = ps2Ctrl.io.ready & ~ready
   val is_read = io.in.psel && io.in.penable && !io.in.pwrite
-  when(ps2Ctrl.io.ready) {
-    rdata := Cat(0.U(24.W),ps2Ctrl.io.data)
+
+  when(ready_rise) {
+    fifo(w_ptr) := ps2Ctrl.io.data
+    w_ptr := Mux(w_ptr <= 14.U, w_ptr + 1.U, w_ptr)
     nextdata_n := false.B
-    ready := true.B
-  }.elsewhen(is_read){
+  }.otherwise{
     nextdata_n := true.B
-    ready := false.B
-  }.otherwise {
-    nextdata_n := true.B
-    rdata := rdata
-    ready := ready
   }
+  
+  when(is_read){
+    for(i <- 0 until 15){
+      fifo(i) := fifo(i + 1)
+    }
+    w_ptr := Mux(w_ptr >= 1.U, w_ptr - 1.U, w_ptr)
+  }
+
+  ps2Ctrl.io.clk := clock
+  ps2Ctrl.io.reset := reset
   ps2Ctrl.io.nextdata_n :=  nextdata_n  
-  ps2Ctrl.io.ps2 <> io.ps2
-  io.in.prdata    := Mux(ready,rdata,0.U)
-  io.in.pready    := is_read
-  io.in.pslverr   := 0.U
+  ps2Ctrl.io.ps2_clk := io.ps2.clk
+  ps2Ctrl.io.ps2_data := io.ps2.data
+
+  io.in.prdata    := Mux(is_read,fifo(0),0.U)
+  io.in.pready    := io.in.penable
 }
+
+
+class ps2Keyboard extends BlackBox with HasBlackBoxInline {
+    val io = IO(new Bundle{
+        val clk = Input(Clock())
+        val reset = Input(Reset())
+        val ps2_clk = Input(Bool())
+        val ps2_data = Input(Bool())
+        val nextdata_n = Input(Bool())
+        val data = Output(UInt(8.W))
+        val ready = Output(Bool())
+        val overflow = Output(Bool())
+    })
+    setInline("ps2Keyboard.v",
+    """module ps2Keyboard(clk,reset,ps2_clk,ps2_data,data,
+      |                    ready,nextdata_n,overflow);
+      |    input clk,reset,ps2_clk,ps2_data;
+      |    input nextdata_n;
+      |    output [7:0] data;
+      |    output reg ready;
+      |    output reg overflow;     // fifo overflow
+      |    // internal signal, for test
+      |    reg [9:0] buffer;        // ps2_data bits
+      |    reg [7:0] fifo[7:0];     // data fifo
+      |    reg [2:0] w_ptr,r_ptr;   // fifo write and read pointers
+      |    reg [3:0] count;  // count ps2_data bits
+      |    // detect falling edge of ps2_clk
+      |    reg [2:0] ps2_clk_sync;
+      |
+      |    always @(posedge clk) begin
+      |        ps2_clk_sync <=  {ps2_clk_sync[1:0],ps2_clk};
+      |    end
+      |
+      |    wire sampling = ps2_clk_sync[2] & ~ps2_clk_sync[1];
+      |
+      |    always @(posedge clk) begin
+      |        if (reset) begin // reset
+      |            count <= 0; w_ptr <= 0; r_ptr <= 0; ready<= 0;
+      |        end
+      |        else begin
+      |            if ( ready ) begin // read to output next data
+      |                if(nextdata_n == 1'b0) //read next data
+      |                begin
+      |                    r_ptr <= r_ptr + 3'b1;
+      |                    if(w_ptr==(r_ptr+1'b1)) //empty
+      |                        ready <= 1'b0;
+      |                end
+      |            end
+      |            if (sampling) begin
+      |              if (count == 4'd10) begin
+      |                if ((buffer[0] == 0) &&  // start bit
+      |                    (ps2_data)       &&  // stop bit
+      |                    (^buffer[9:1])) begin      // odd  parity
+      |                    fifo[w_ptr] <= buffer[8:1];  // kbd scan code
+      |                    w_ptr <= w_ptr+3'b1;
+      |                    ready <= 1'b1;
+      |                end
+      |                count <= 0;     // for next
+      |              end else begin
+      |                buffer[count] <= ps2_data;  // store ps2_data
+      |                count <= count + 3'b1;
+      |              end
+      |            end
+      |        end
+      |    end
+      |    assign data = fifo[r_ptr]; //always set output data
+      |endmodule  
+    """.stripMargin)
+ }
 
 class APBKeyboard(address: Seq[AddressSet])(implicit p: Parameters) extends LazyModule {
   val node = APBSlaveNode(Seq(APBSlavePortParameters(

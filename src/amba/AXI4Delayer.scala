@@ -28,8 +28,8 @@ class AXI4DelayerChisel extends Module {
   val state = RegInit(s_idle)
   // B2 freq 350 MHz, device typical 100MHz
   // B4 freq 550 MHz, device typical 100MHz  
-  // s = 2^16, r= 3.5 , s_r = 229376
-  val s_r = 229376.U(32.W)
+  // s = 2^16, r= 7 , s_r = 458752
+  val s_r = 458752.U(32.W)
   val cnt = RegInit(0.U(32.W))
   val axi_start = (io.in.ar.valid && io.in.ar.ready) || (io.in.aw.valid && io.in.aw.ready)
   val axi_finsh = (io.out.r.valid &&  io.out.r.ready) || (io.out.b.valid && io.out.b.ready)

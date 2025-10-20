@@ -29,66 +29,123 @@ class vga_top_apb extends BlackBox {
 }
 
 class vgaChisel extends Module {
-  val io = IO(new VGACtrlIO)
+    val io = IO(new VGACtrlIO)
+    val vgaCtrl = Module(new vgaCtrl)
 
-    // 可配置时序参数（640x480@60Hz）
-    case class VGAParams(
-        hFrontPorch: Int = 96,
-        hActive:     Int = 144,
-        hBackPorch:  Int = 784,
-        hTotal:      Int = 800,
-        vFrontPorch: Int = 2,
-        vActive:     Int = 35,
-        vBackPorch:  Int = 515,
-        vTotal:      Int = 525
-    )
-    io.in.pready := true.B
-    io.in.pslverr := false.B
-    io.in.prdata := 0.U
-    val params = VGAParams()
-    
-    val sram = SyncReadMem(524288, UInt(24.W))
-    val xCnt = RegInit(1.U(10.W)).suggestName("xCnt")
-    val yCnt = RegInit(1.U(10.W)).suggestName("yCnt")
-
-    val is_write = io.in.psel && io.in.penable && io.in.pwrite
-    when(is_write){
-      sram.write(io.in.paddr(18,0), io.in.pwdata(23,0))
+    val buffer = Mem(640 * 480, Vec(4, UInt(8.W)))
+    val addr = Wire(UInt(20.W))
+    val wdata = Wire(Vec(4, UInt(8.W)))
+    io := DontCare
+    io.in.pready := io.in.penable
+    addr := io.in.paddr(20, 2)
+    for(i <- 0 until 4){
+        wdata(i) := io.in.pwdata(i * 8 + 7, i * 8)
     }
-
-    // 水平计数器逻辑
-    when(io.reset) {
-        xCnt := 1.U
-    }.otherwise {
-        xCnt := Mux(xCnt === params.hTotal.U, 1.U, xCnt + 1.U)
+    when(io.in.penable && io.in.pwrite){
+      buffer.write(addr, wdata)
+        
     }
+    vgaCtrl.io.pclk := clock
+    vgaCtrl.io.reset := reset
+    vgaCtrl.io.vga_data := buffer.read(vgaCtrl.io.h_addr + vgaCtrl.io.v_addr * 640.U).asUInt
 
-    // 垂直计数器逻辑
-    when(io.reset) {
-        yCnt := 1.U
-    }.elsewhen(xCnt === params.hTotal.U) {
-        yCnt := Mux(yCnt === params.vTotal.U, 1.U, yCnt + 1.U)
-    }
-
-    // 有效区域判断
-    val hValid = (xCnt > params.hActive.U) && (xCnt <= params.hBackPorch.U)
-    val vValid = (yCnt > params.vActive.U) && (yCnt <= params.vBackPorch.U)
-    
-    // 同步信号生成（低有效脉冲）
-    io.vga.vsync := yCnt > params.vFrontPorch.U
-    io.vga.hsync := xCnt > params.hFrontPorch.U
-    io.vga.valid := hValid && vValid
-
-    // 像素坐标计算（消隐区归零）
-    val h_addr = Mux(hValid, xCnt - (params.hActive + 1).U, 0.U)
-    val v_addr = Mux(vValid, yCnt - (params.vActive + 1).U, 0.U)
-    val vga_data = sram((v_addr<< 9) + h_addr)
-    
-    // RGB输出（直接映射高位）
-    io.vga.r := vga_data(23, 16)
-    io.vga.g := vga_data(15, 8)
-    io.vga.b := vga_data(7, 0)
+    io.vga.hsync := vgaCtrl.io.hsync
+    io.vga.vsync := vgaCtrl.io.vsync
+    io.vga.valid := vgaCtrl.io.valid
+    io.vga.r     := vgaCtrl.io.vga_r
+    io.vga.g     := vgaCtrl.io.vga_g
+    io.vga.b     := vgaCtrl.io.vga_b
 }
+
+
+
+
+
+class vgaCtrl extends BlackBox with HasBlackBoxInline {
+    val io = IO(new Bundle{
+        val pclk = Input(Clock())
+        val reset = Input(Reset())
+        val vga_data = Input(UInt(24.W))
+
+        val h_addr = Output(UInt(10.W))
+        val v_addr = Output(UInt(10.W))
+        val hsync = Output(Bool())
+        val vsync = Output(Bool())
+        val valid = Output(Bool())
+        val vga_r = Output(UInt(8.W))
+        val vga_g = Output(UInt(8.W))
+        val vga_b = Output(UInt(8.W))
+    })
+    setInline("vgaCtrl.v",
+    """module vgaCtrl(
+          input           pclk,     //25MHz时钟
+          input           reset,    //置位
+          input  [23:0]   vga_data, //上层模块提供的VGA颜色数据
+          output [9:0]    h_addr,   //提供给上层模块的当前扫描像素点坐标
+          output [9:0]    v_addr,
+          output          hsync,    //行同步和列同步信号
+          output          vsync,
+          output          valid,    //消隐信号
+          output [7:0]    vga_r,    //红绿蓝颜色信号
+          output [7:0]    vga_g,
+          output [7:0]    vga_b
+          );
+
+        //640x480分辨率下的VGA参数设置
+        parameter    h_frontporch = 96;
+        parameter    h_active = 144;
+        parameter    h_backporch = 784;
+        parameter    h_total = 800;
+
+        parameter    v_frontporch = 2;
+        parameter    v_active = 35;
+        parameter    v_backporch = 515;
+        parameter    v_total = 525;
+
+        //像素计数值
+        reg [9:0]    x_cnt;
+        reg [9:0]    y_cnt;
+        wire         h_valid;
+        wire         v_valid;
+
+        always @(posedge reset or posedge pclk) //行像素计数
+            if (reset == 1'b1)
+              x_cnt <= 1;
+            else
+            begin
+              if (x_cnt == h_total)
+                  x_cnt <= 1;
+              else
+                  x_cnt <= x_cnt + 10'd1;
+            end
+
+        always @(posedge pclk)  //列像素计数
+            if (reset == 1'b1)
+              y_cnt <= 1;
+            else
+            begin
+              if (y_cnt == v_total & x_cnt == h_total)
+                  y_cnt <= 1;
+              else if (x_cnt == h_total)
+                  y_cnt <= y_cnt + 10'd1;
+            end
+        //生成同步信号
+        assign hsync = (x_cnt > h_frontporch);
+        assign vsync = (y_cnt > v_frontporch);
+        //生成消隐信号
+        assign h_valid = (x_cnt > h_active) & (x_cnt <= h_backporch);
+        assign v_valid = (y_cnt > v_active) & (y_cnt <= v_backporch);
+        assign valid = h_valid & v_valid;
+        //计算当前有效像素坐标
+        assign h_addr = h_valid ? (x_cnt - 10'd145) : {10{1'b0}};
+        assign v_addr = v_valid ? (y_cnt - 10'd36) : {10{1'b0}};
+        //设置输出的颜色值
+        assign vga_r = vga_data[23:16];
+        assign vga_g = vga_data[15:8];
+        assign vga_b = vga_data[7:0];
+      endmodule
+    """.stripMargin)
+ }
 
 class APBVGA(address: Seq[AddressSet])(implicit p: Parameters) extends LazyModule {
   val node = APBSlaveNode(Seq(APBSlavePortParameters(
